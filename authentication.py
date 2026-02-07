@@ -1,6 +1,6 @@
 import re
 import bcrypt
-from database import get_db_cursor
+from database import get_db_cursor 
 
 
 # functions for validating password strength, hashing passwords, checking password validity, validating email format, creating users, logging in users, and fetching user information by usernames
