@@ -1,7 +1,7 @@
 import streamlit as st
 from authentication import register_user, is_pw_ok, is_email_valid
 
-st.title("Register with Diggable") 
+st.title("Register with Diggable")
 
 username = st.text_input("Username")
 email = st.text_input("Email")
@@ -36,6 +36,6 @@ if st.button("Get To Digging!"):
             register_user(username, email, password)
             st.success("Registration successful! Go to the Login page to sign in.")
         except Exception as e:
-            st.error(str(e))    
+            st.error(str(e))
 
 st.info("Already have an account? Go to the Login page to sign in!")
