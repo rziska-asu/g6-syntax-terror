@@ -18,8 +18,8 @@ def record_successful_login(user_id: int):
     with get_db_cursor() as cursor:
         cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user_id,))
 
-st.set_page_config(page_title="Log on")
-st.title("Log on")
+st.set_page_config(page_title="Log In")
+st.title("Log In")
 
 username = st.text_input("Username")
 password = st.text_input("Password", type="password")
@@ -27,7 +27,7 @@ password = st.text_input("Password", type="password")
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    if st.button("Log on"):
+    if st.button("Log In"):
         u = username.strip()
 
         if not u or not password:
@@ -49,7 +49,7 @@ with col1:
             st.session_state["username"] = user["username"]
             st.session_state["email"] = user["email"]
 
-            st.switch_page("app.py")
+            st.switch_page("home.py")
         else:
                 st.error("Username or password does not exist.")
 
