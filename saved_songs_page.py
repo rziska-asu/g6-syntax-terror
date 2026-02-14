@@ -1,13 +1,13 @@
 from database import get_db_cursor
 
-def save_song(user_id: int, track_name: str, artist_name: str, track_url: str):
+def save_song(user_id: int, track_name: str, artist_name: str, lastfm_url, itunes_url, album_name, image_url):
     sql = """
-        INSERT INTO saved_songs (user_id, track_name, artist_name, track_url)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO liked_tracks (user_id, artist_name, track_name, lastfm_url, itunes_url, album_name, image_url)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
     try:
         with get_db_cursor() as cursor:
-            cursor.execute(sql, (user_id, track_name, artist_name, track_url))
+            cursor.execute(sql, (user_id, artist_name, track_name, lastfm_url, itunes_url, album_name, image_url))
         return True
     except Exception:
     
@@ -15,8 +15,8 @@ def save_song(user_id: int, track_name: str, artist_name: str, track_url: str):
 
 def get_saved_songs(user_id: int):
     sql = """
-        SELECT id, track_name, artist_name, track_url, created_at
-        FROM saved_songs
+        SELECT artist_name, track_name, lastfm_url, itunes_url, album_name, image_url
+        FROM liked_tracks
         WHERE user_id = %s
         ORDER BY created_at DESC
     """
@@ -26,7 +26,7 @@ def get_saved_songs(user_id: int):
 
 def remove_song(user_id: int, track_url: str):
     sql = """
-        DELETE FROM saved_songs
+        DELETE FROM liked_tracks
         WHERE user_id = %s AND track_url = %s
     """
     with get_db_cursor() as cursor:

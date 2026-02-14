@@ -1,5 +1,5 @@
 import streamlit as st
-from saved_songs import get_saved_songs, remove_song
+from saved_songs_page import get_saved_songs, remove_song
 
 st.set_page_config(page_title="Saved Songs")
 st.title("My Saved Songs")
