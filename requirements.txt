@@ -4,4 +4,5 @@ bcrypt
 mysql-connector-python
 python-dotenv
 requests
+certifi
 
