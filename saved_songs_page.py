@@ -1,33 +1,44 @@
+import streamlit as st
 from database import get_db_cursor
 
-def save_song(user_id: int, track_name: str, artist_name: str, lastfm_url, itunes_url, album_name, image_url):
-    sql = """
-        INSERT INTO liked_tracks (user_id, artist_name, track_name, lastfm_url, itunes_url, album_name, image_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """
-    try:
-        with get_db_cursor() as cursor:
-            cursor.execute(sql, (user_id, artist_name, track_name, lastfm_url, itunes_url, album_name, image_url))
-        return True
-    except Exception:
-    
-        return False
+st.set_page_config(page_title="Saved Songs")
+st.title("My Saved Songs")
 
-def get_saved_songs(user_id: int):
-    sql = """
-        SELECT artist_name, track_name, lastfm_url, itunes_url, album_name, image_url
+
+user_id = st.session_state.get("user_id")
+
+if not user_id:
+    st.warning("Please log in to view your saved songs.")
+    st.stop()
+with get_db_cursor() as cur:
+    cur.execute(
+        """
+        SELECT id, artist_name, track_name, album_name, lastfm_url, itunes_url, image_url, created_at
         FROM liked_tracks
         WHERE user_id = %s
         ORDER BY created_at DESC
-    """
-    with get_db_cursor() as cursor:
-        cursor.execute(sql, (user_id,))
-        return cursor.fetchall()
+        """,
+        (user_id,),
+    )
+    songs = cur.fetchall()
 
-def remove_song(user_id: int, track_url: str):
-    sql = """
-        DELETE FROM liked_tracks
-        WHERE user_id = %s AND track_url = %s
-    """
-    with get_db_cursor() as cursor:
-        cursor.execute(sql, (user_id, track_url))
+if not songs:
+    st.info("You have not saved any songs yet.")
+    st.stop()
+
+
+for song in songs:
+    st.write(f"🎵 **{song['track_name']}** — {song['artist_name']}")
+    if song.get(lastfm_url := song.get("lastfm_url")):
+        st.link_button("View on Last.fm", lastfm_url)
+    
+    if st.button("Remove", key=f"remove_{song['id']}"):
+        with get_db_cursor() as cur:
+            cur.execute(
+                "DELETE FROM liked_tracks WHERE id = %s AND user_id = %s",
+                (song["id"], user_id),
+            )
+        st.success("Song removed.")
+        st.rerun()
+
+    st.divider()
