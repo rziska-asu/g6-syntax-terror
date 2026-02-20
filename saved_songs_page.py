@@ -26,6 +26,11 @@ if not songs:
     st.info("You have not saved any songs yet.")
     st.stop()
 
+if st.button("Clear All Songs", key="clear_all_songs"):
+    with get_db_cursor() as cur:
+        cur.execute("DELETE FROM liked_tracks WHERE user_id = %s", (user_id,))
+    st.success("All saved songs removed.")
+    st.rerun()
 
 for song in songs:
     st.write(f"🎵 **{song['track_name']}** — {song['artist_name']}")
