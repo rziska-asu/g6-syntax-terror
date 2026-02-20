@@ -1,0 +1,23 @@
+from database import get_db_cursor
+
+
+def record_search(user_id: int, query_type: str, query_text: str) -> None:
+    sql = """
+        INSERT INTO search_history (user_id, query_type, query_text)
+        VALUES (%s, %s, %s)
+    """
+    with get_db_cursor() as cursor:
+        cursor.execute(sql, (user_id, query_type, query_text))
+
+
+def get_recent_searches(user_id: int, limit: int = 5):
+    sql = """
+        SELECT id, query_type, query_text
+        FROM search_history
+        WHERE user_id = %s
+        ORDER BY created_at DESC
+        LIMIT %s
+    """
+    with get_db_cursor() as cursor:
+        cursor.execute(sql, (user_id, limit))
+        return cursor.fetchall()
