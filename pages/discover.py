@@ -9,6 +9,8 @@ import streamlit as st
 import pylast
 from dotenv import load_dotenv
 from quiz_options import GENRES
+from search_history import record_search, get_recent_searches
+
 
 # Load .env from project root (Streamlit may run with cwd elsewhere)
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
@@ -19,23 +21,54 @@ if not st.session_state.get("session_id"):
     st.warning("Please log in to use search.")
     st.stop()
 
+user_id = st.session_state.get("user_id")
+
+st.subheader("Recent searches")
+if user_id:
+    recent = get_recent_searches(user_id, limit=5)
+    if not recent:
+        st.caption("No recent searches yet.")
+    else:
+        for r in recent:
+            label = f"{r['query_type']}: {r['query_text']}"
+            if st.button(label, key=f"recent_{r['id']}"):
+                st.session_state["run_recent_search"] = {
+                    "type": r["query_type"],
+                    "text": r["query_text"]
+                }
+                st.rerun()
+
 def get_net():
     return pylast.LastFMNetwork(
         api_key=os.getenv("LASTFM_API_KEY", "").strip(),
         api_secret=os.getenv("LASTFM_API_SECRET", "").strip(),
     )
 
-# --- Search by genre ---
+# Search by genre
 st.subheader("Search by genre")
 genre_options = [""] + GENRES
 selected_genre = st.selectbox("Genre", options=genre_options, index=0, key="genre_select")
 custom_genre = st.text_input("Or enter a genre", key="genre_custom")
 genre = (custom_genre or selected_genre or "").strip()
 
-search_genre_clicked = st.button("Search genre", key="discover_search_genre")
+
+# auto run recent searches
+recent_click = st.session_state.pop("run_recent_search", None)
+if recent_click:
+    if recent_click["type"] == "genre":
+        genre = recent_click["text"]
+        st.session_state["auto_genre_search"] = True
+    elif recent_click["type"] == "term":
+        st.session_state["discover_q"] = recent_click["text"]
+        st.session_state["auto_term_search"] = True
+
+
+search_genre_clicked = st.button("Search genre", key="discover_search_genre") or st.session_state.pop("auto_genre_search", False)
 if search_genre_clicked and genre:
-    api_key = os.getenv("LASTFM_API_KEY", "").strip()
-    api_secret = os.getenv("LASTFM_API_SECRET", "").strip()
+    if user_id:
+        record_search(user_id, "genre", genre)
+        api_key = os.getenv("LASTFM_API_KEY", "").strip()
+        api_secret = os.getenv("LASTFM_API_SECRET", "").strip()
     if not api_key or not api_secret:
         st.error("Last.fm API not configured. Add LASTFM_API_KEY and LASTFM_API_SECRET to .env")
     else:
@@ -65,7 +98,7 @@ if search_genre_clicked and genre:
 elif search_genre_clicked and not genre:
     st.warning("Select or enter a genre to search.")
 
-# --- General search (artist / album / track) ---
+# General search (artist / album / track)
 st.subheader("Search by term")
 @st.cache_data(ttl=300)
 def search_term(q: str):
@@ -74,7 +107,7 @@ def search_term(q: str):
     artists_raw = net.search_for_artist(q).get_next_page()[:10]
     albums_raw  = net.search_for_album(q).get_next_page()[:10]
 
-    # Track search in pylast needs (artist_name, track_name)
+    # Track search in pylast needs 
     tracks_raw = []
     if " - " in q:
         artist_name, track_name = [s.strip() for s in q.split(" - ", 1)]
@@ -96,8 +129,13 @@ def search_term(q: str):
     return artists, albums, tracks
 
 q = st.text_input("Search", key="discover_q")
-if st.button("Search", key="discover_search"):
+term_clicked = st.button("Search", key="discover_search") or st.session_state.pop("auto_term_search", False)
+if term_clicked:
+
     q_clean = (q or "").strip()
+    if user_id and q_clean:
+        record_search(user_id, "term", q_clean)
+
 
     if not q_clean:
         st.info("Enter a search term.")
