@@ -10,6 +10,7 @@ import pylast
 from dotenv import load_dotenv
 from quiz_options import GENRES
 from search_history import record_search, get_recent_searches
+from track_actions import add_like, add_dislike, add_skip, is_liked, is_disliked, is_skipped
 
 
 # Load .env from project root (Streamlit may run with cwd elsewhere)
@@ -67,8 +68,8 @@ search_genre_clicked = st.button("Search genre", key="discover_search_genre") or
 if search_genre_clicked and genre:
     if user_id:
         record_search(user_id, "genre", genre)
-        api_key = os.getenv("LASTFM_API_KEY", "").strip()
-        api_secret = os.getenv("LASTFM_API_SECRET", "").strip()
+    api_key = os.getenv("LASTFM_API_KEY", "").strip()
+    api_secret = os.getenv("LASTFM_API_SECRET", "").strip()
     if not api_key or not api_secret:
         st.error("Last.fm API not configured. Add LASTFM_API_KEY and LASTFM_API_SECRET to .env")
     else:
@@ -84,7 +85,30 @@ if search_genre_clicked and genre:
                     st.write("**Tracks**")
                     for t in tracks:
                         item = t.item
-                        st.write(f"**{item.get_name()}** — {item.get_artist().get_name()}")
+                        track_name = item.get_name()
+                        artist_name = item.get_artist().get_name()
+                        try:
+                            track_url = item.get_url()
+                        except Exception:
+                            track_url = None
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.write(f"**{track_name}** — {artist_name}")
+                        with col2:
+                            if user_id:
+                                liked = is_liked(user_id, artist_name, track_name)
+                                if st.button("Like", key=f"genre_like_{artist_name}_{track_name}", disabled=liked):
+                                    if add_like(user_id, artist_name, track_name, lastfm_url=track_url):
+                                        st.toast(f"Liked {track_name}")
+                                    st.rerun()
+                                if st.button("Dislike", key=f"genre_dislike_{artist_name}_{track_name}"):
+                                    if add_dislike(user_id, artist_name, track_name, lastfm_url=track_url):
+                                        st.toast(f"Disliked {track_name}")
+                                    st.rerun()
+                                if st.button("Skip", key=f"genre_skip_{artist_name}_{track_name}"):
+                                    if add_skip(user_id, artist_name, track_name, lastfm_url=track_url):
+                                        st.toast(f"Skipped {track_name}")
+                                    st.rerun()
                 if artists:
                     st.write("**Artists**")
                     for a in artists:
@@ -208,3 +232,21 @@ if results and results.get("q"):
                 st.subheader(title)
                 st.write(f"Artist: {artist}")
                 st.link_button("View details / play (if available)", url)
+                if user_id:
+                    st.write("**Actions:**")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        if st.button("Like", key="term_like_btn"):
+                            if add_like(user_id, artist, title, lastfm_url=url):
+                                st.toast(f"Liked {title}")
+                            st.rerun()
+                    with c2:
+                        if st.button("Dislike", key="term_dislike_btn"):
+                            if add_dislike(user_id, artist, title, lastfm_url=url):
+                                st.toast(f"Disliked {title}")
+                            st.rerun()
+                    with c3:
+                        if st.button("Skip", key="term_skip_btn"):
+                            if add_skip(user_id, artist, title, lastfm_url=url):
+                                st.toast(f"Skipped {title}")
+                            st.rerun()
