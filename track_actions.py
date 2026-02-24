@@ -1,24 +1,15 @@
-"""
-Like, dislike, and skip actions for tracks. Persisted in DB for learning and recommendations.
-"""
 import requests
 from database import get_db_cursor
 
 
+# Helper to commit if possible, but ignore if connection is already closed
 def _commit_if_possible(cur) -> None:
-    """
-    Some implementations of get_db_cursor auto-commit, some don't.
-    This makes writes reliable without breaking autocommit setups.
-    """
+
     try:
         cur.connection.commit()
     except Exception:
         pass
 
-
-# -------------------------
-# WRITE ACTIONS
-# -------------------------
 
 def add_like(
     user_id: int,
@@ -39,15 +30,24 @@ def add_like(
                 VALUES
                     (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (user_id, artist_name, track_name, lastfm_url, itunes_url, album_name, image_url),
+                (
+                    user_id,
+                    artist_name,
+                    track_name,
+                    lastfm_url,
+                    itunes_url,
+                    album_name,
+                    image_url,
+                ),
             )
             _commit_if_possible(cur)
             return True
         except Exception:
-            # e.g., duplicate key / constraint violation
+
             return False
 
 
+# record a dislike for a track.
 def add_dislike(
     user_id: int,
     artist_name: str,
@@ -55,10 +55,7 @@ def add_dislike(
     lastfm_url: str = None,
     itunes_url: str = None,
 ) -> bool:
-    """
-    Record a dislike for a track.
-    Returns True if inserted, False if already disliked.
-    """
+
     with get_db_cursor() as cur:
         try:
             cur.execute(
@@ -83,10 +80,7 @@ def add_skip(
     lastfm_url: str = None,
     itunes_url: str = None,
 ) -> bool:
-    """
-    Record a skip for a track.
-    Returns True if inserted, False if already skipped.
-    """
+
     with get_db_cursor() as cur:
         try:
             cur.execute(
@@ -103,10 +97,6 @@ def add_skip(
         except Exception:
             return False
 
-
-# -------------------------
-# READ HELPERS (USED FOR DISABLING BUTTONS)
-# -------------------------
 
 def is_liked(user_id: int, artist_name: str, track_name: str) -> bool:
     with get_db_cursor() as cur:
@@ -135,10 +125,7 @@ def is_skipped(user_id: int, artist_name: str, track_name: str) -> bool:
         return cur.fetchone() is not None
 
 
-# -------------------------
-# SETS (FOR FILTERING RECOMMENDATIONS)
-# -------------------------
-
+# functions to get sets of liked/disliked/skipped tracks for filtering recommendations without hitting the DB repeatedl
 def get_disliked_set(user_id: int) -> set:
     """
     Return set of (artist_name, track_name) tuples for use in filtering recommendations.
@@ -156,10 +143,7 @@ def get_disliked_set(user_id: int) -> set:
 
 
 def get_liked_set(user_id: int) -> set:
-    """
-    Return set of (artist_name, track_name) tuples for filtering.
-    Safe even if liked_tracks exists but is empty.
-    """
+
     try:
         with get_db_cursor() as cur:
             cur.execute(
@@ -173,8 +157,7 @@ def get_liked_set(user_id: int) -> set:
 
 def get_skipped_set(user_id: int) -> set:
     """
-    Return set of (artist_name, track_name) tuples for filtering.
-    Returns empty set if skipped_tracks table does not exist (e.g. migration not run yet).
+    return set of (artist_name, track_name) tuples for filtering.
     """
     try:
         with get_db_cursor() as cur:
@@ -187,12 +170,8 @@ def get_skipped_set(user_id: int) -> set:
         return set()
 
 
-# -------------------------
-# SAVED SONGS PAGE HELPERS
-# -------------------------
-
 def get_saved_songs(user_id: int) -> list:
-    """Return list of liked/saved tracks for the user (for Saved Songs page)."""
+    """Return list of liked tracks for the user, ordered by most recent. Each track is a dict with keys: id, artist_name, track_name, album_name, lastfm_url, itunes_url, image_url, created_at."""
     with get_db_cursor() as cur:
         cur.execute(
             """
@@ -209,7 +188,10 @@ def get_saved_songs(user_id: int) -> list:
 def remove_song(user_id: int, song_id: int) -> None:
     """Remove a saved (liked) track by id."""
     with get_db_cursor() as cur:
-        cur.execute("DELETE FROM liked_tracks WHERE id = %s AND user_id = %s", (song_id, user_id))
+        cur.execute(
+            "DELETE FROM liked_tracks WHERE id = %s AND user_id = %s",
+            (song_id, user_id),
+        )
         _commit_if_possible(cur)
 
 
@@ -219,17 +201,16 @@ def clear_all_saved_songs(user_id: int) -> None:
         cur.execute("DELETE FROM liked_tracks WHERE user_id = %s", (user_id,))
         _commit_if_possible(cur)
 
+
 def get_itunes_preview_url(artist: str, track: str) -> str | None:
     """
-    Uses the public iTunes Search API to find a short audio preview (usually .m4a).
-    Returns a direct preview URL or None.
+    Get iTunes preview URL for a track. Returns None if not found or on error.
     """
     artist = (artist or "").strip()
     track = (track or "").strip()
     if not artist or not track:
         return None
 
-    # iTunes search works best with "artist track"
     term = f"{artist} {track}"
 
     try:
@@ -249,8 +230,7 @@ def get_itunes_preview_url(artist: str, track: str) -> str | None:
         if not results:
             return None
 
-        # Try to pick the best match:
-        # 1) exact-ish artist match
+        # Simple scoring to find best match among results, since iTunes search can be spotty.
         artist_l = artist.lower()
         track_l = track.lower()
 
