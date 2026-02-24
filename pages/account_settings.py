@@ -9,7 +9,7 @@ from quiz_options import GENRES, MIN_PREFERENCES
 st.set_page_config(page_title="Account Settings")
 st.title("Account Settings")
 
-# prevent access if not logged in
+# prevents access to page if you are not logged in
 if "session_id" not in st.session_state:
     st.warning("To access settings, please log in.")
     st.stop()
