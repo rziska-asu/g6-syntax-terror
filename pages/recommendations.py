@@ -1,126 +1,261 @@
-# Based on the user's genre preferences, recommend the app reads the user's saved genre preferences.
-# Recommendations load when the user opens the page or clicks "Recommend More". 10 recommendations, randomized.
-# User can like (save), dislike, or skip tracks; actions persist and can influence future recommendations.
-
 import streamlit as st
 import pylast
-import json
+import os
 import random
-import requests
-from database import get_db_cursor
-from track_actions import add_like, add_dislike, add_skip, is_liked, get_disliked_set
+from dotenv import load_dotenv
 
-st.set_page_config(page_title="Recommendations")
-st.title("Based on Your Preferences Here are Some Recommendations for You!")
+
+from track_actions import (
+    is_liked,
+    add_like,
+    get_disliked_set,
+    is_disliked,
+    add_dislike,
+    is_skipped,
+    add_skip,
+    get_itunes_preview_url,
+)
 
 # Use env for API keys when available
-import os
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
-API_KEY = os.getenv("LASTFM_API_KEY", "2d574e647b2dca1dafc48f3b7a82d900").strip()
-API_SECRET = os.getenv("LASTFM_API_SECRET", "2ce19faccfcf209c0319b38ea48b5244").strip()
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(project_root, ".env"))
+
+LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
+LASTFM_API_SECRET = os.getenv("LASTFM_API_SECRET")
+
+network = pylast.LastFMNetwork(
+    api_key=LASTFM_API_KEY,
+    api_secret=LASTFM_API_SECRET,
+)
 
 
-def get_itunes_preview(artist, track_name):
-    try:
-        url = "https://itunes.apple.com/search"
-        params = {"term": f"{artist} {track_name}", "media": "music", "entity": "song", "limit": 1}
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-        if data["resultCount"] > 0:
-            return data["results"][0].get("previewUrl")
-    except Exception:
-        pass
-    return None
+def norm_key(artist: str, track: str) -> str:
+    return f"{artist.strip().lower()}::{track.strip().lower()}"
 
 
-if "user_id" not in st.session_state:
-    st.warning("Please log in to see your recommendations.")
+def ensure_state():
+    if "rec_pool" not in st.session_state:
+        st.session_state["rec_pool"] = []
+
+    if "rec_tracks" not in st.session_state:
+        st.session_state["rec_tracks"] = []
+
+    if "rec_genre" not in st.session_state:
+        st.session_state["rec_genre"] = None
+
+    # prevents song from showing up again in the same session after being liked/disliked/skipped
+    if "rec_seen" not in st.session_state:
+        st.session_state["rec_seen"] = set()
+
+    # Cache iTunes previews to avoid redundant API calls and speed up the UI
+    if "preview_cache" not in st.session_state:
+        st.session_state["preview_cache"] = {}
+
+    if "rec_source_genre" not in st.session_state:
+        st.session_state["rec_source_genre"] = None
+
+# functions to build and manage the recommendation pool based on genre and user preferences, ensuring disliked tracks are filtered out and seen tracks aren't repeated in the same session
+def build_pool_for_genre(genre: str, user_id: int, pool_limit: int = 200):
+    tag = network.get_tag(genre.lower())
+    raw = tag.get_top_tracks(limit=pool_limit)
+
+    disliked_set = get_disliked_set(user_id)
+
+    pool = []
+    for t in raw:
+        item = t.item
+        track_name = item.get_name()
+        artist_name = item.get_artist().get_name()
+
+        if (artist_name, track_name) in disliked_set:
+            continue
+
+        k = norm_key(artist_name, track_name)
+        if k in st.session_state["rec_seen"]:
+            continue
+
+        try:
+            track_url = item.get_url()
+        except Exception:
+            track_url = None
+
+        pool.append(
+            {"artist": artist_name, "track": track_name, "lastfm_url": track_url}
+        )
+
+    random.shuffle(pool)
+    return pool
+
+# functions to manage the recommendation pool and track list, replacing tracks when liked/disliked/skipped, and fetching preview URLs with caching to optimize performance
+def refill_tracks_if_needed(genre: str, user_id: int, display_count: int = 10):
+    ensure_state()
+
+    genre_changed = st.session_state["rec_genre"] != genre
+
+    if genre_changed:
+        st.session_state["rec_genre"] = genre
+        st.session_state["rec_pool"] = build_pool_for_genre(
+            genre, user_id, pool_limit=200
+        )
+        st.session_state["rec_tracks"] = []
+
+    while len(st.session_state["rec_tracks"]) < display_count:
+        if not st.session_state["rec_pool"]:
+            st.session_state["rec_pool"] = build_pool_for_genre(
+                genre, user_id, pool_limit=200
+            )
+            if not st.session_state["rec_pool"]:
+                break
+
+        nxt = st.session_state["rec_pool"].pop(0)
+        st.session_state["rec_tracks"].append(nxt)
+        st.session_state["rec_seen"].add(norm_key(nxt["artist"], nxt["track"]))
+
+
+def replace_one_track_at_index(index: int, genre: str, user_id: int):
+    ensure_state()
+
+    if index < 0 or index >= len(st.session_state["rec_tracks"]):
+        return
+
+    if not st.session_state["rec_pool"]:
+        st.session_state["rec_pool"] = build_pool_for_genre(
+            genre, user_id, pool_limit=200
+        )
+
+    if not st.session_state["rec_pool"]:
+        return
+
+    nxt = st.session_state["rec_pool"].pop(0)
+    st.session_state["rec_tracks"][index] = nxt
+    st.session_state["rec_seen"].add(norm_key(nxt["artist"], nxt["track"]))
+
+
+def get_preview_cached(artist: str, track: str):
+    """
+    Get iTunes preview URL with caching to minimize API calls. 
+    """
+    ensure_state()
+    k = norm_key(artist, track)
+
+    cached = st.session_state["preview_cache"].get(k)
+    if cached:
+        return cached
+
+    url = get_itunes_preview_url(artist, track)
+
+    if url:
+        st.session_state["preview_cache"][k] = url
+
+    return url
+
+
+# Page UI and interactions
+st.title("Based on your music preferences, here are some tracks you might like!")
+
+user_id = st.session_state.get("user_id")
+if not user_id:
+    st.info("Please log in to see recommendations.")
     st.stop()
 
-user_id = st.session_state["user_id"]
+ensure_state()
 
-genres = []
-try:
-    with get_db_cursor() as cursor:
-        cursor.execute("SELECT latest_quiz FROM user_sessions WHERE user_id = %s", (user_id,))
-        row = cursor.fetchone()
-        if row and row["latest_quiz"]:
-            data = json.loads(row["latest_quiz"])
-            genres = data.get("genres", [])
-except Exception:
-    st.error("Error loading preferences.")
-
-if not genres:
-    st.info("Set your genre preferences in Account settings to get recommendations.")
+prefs = st.session_state.get("quiz_selections", [])
+if not prefs:
+    st.warning(
+        "No music preferences found. Go to Account Settings and select your genres."
+    )
     st.stop()
 
-network = pylast.LastFMNetwork(api_key=API_KEY, api_secret=API_SECRET)
+if not st.session_state["rec_source_genre"]:
+    st.session_state["rec_source_genre"] = random.choice(prefs)
 
-recommend_more = st.button("Recommend More")
-if recommend_more:
-    st.session_state.pop("rec_genre", None)
-    st.session_state.pop("rec_tracks", None)
+current_genre = st.session_state["rec_source_genre"]
 
-# Pick a genre (random or from session)
-current_genre = st.session_state.get("rec_genre")
-if not current_genre or recommend_more:
-    current_genre = random.choice(genres)
-    st.session_state["rec_genre"] = current_genre
+# Shows genres
+st.caption(f"Generating recommendations for: **{current_genre}**")
 
-st.subheader(f"Genre: {current_genre}")
 
-try:
-    tag = network.get_tag(current_genre.lower())
-    tracks_raw = tag.get_top_tracks(limit=15)
-    disliked = get_disliked_set(user_id)
-    # Filter out disliked tracks so recommendations improve
-    tracks_list = [t for t in tracks_raw if (t.item.get_artist().get_name(), t.item.get_name()) not in disliked]
-    random.shuffle(tracks_list)
-    tracks_list = tracks_list[:10]
+if st.button("Recommend More"):
+    st.session_state["rec_pool"] = []
+    st.session_state["rec_tracks"] = []
+    st.session_state["rec_genre"] = None
 
-    if not tracks_list:
-        st.warning("No tracks found for this genre.")
+    if prefs:
+        st.session_state["rec_source_genre"] = random.choice(prefs)
+
+    st.rerun()
+
+refill_tracks_if_needed(current_genre, user_id, display_count=10)
+
+tracks_list = st.session_state["rec_tracks"]
+if not tracks_list:
+    st.write("No recommendations found right now. Try Recommend More.")
+    st.stop()
+
+for i, track_data in enumerate(list(tracks_list)):
+    artist_name = track_data["artist"]
+    track_name = track_data["track"]
+    track_url = track_data.get("lastfm_url")
+
+    st.subheader(f"{track_name}")
+    st.write(f"by **{artist_name}**")
+
+    preview_url = get_preview_cached(artist_name, track_name)
+    if preview_url:
+        st.audio(preview_url)  # don't force format
     else:
-        for t in tracks_list:
-            item = t.item
-            track_name = item.get_name()
-            artist_name = item.get_artist().get_name()
-            try:
-                track_url = item.get_url()
-            except Exception:
-                track_url = None
+        st.caption("No preview found for this track.")
 
-            with st.container():
-                st.write(f"**{track_name}** — {artist_name}")
-                preview = get_itunes_preview(artist_name, track_name)
-                if preview:
-                    st.audio(preview, format="audio/m4a")
+    col1, col2, col3, col4 = st.columns(4)
+    k = norm_key(artist_name, track_name)
 
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    if st.button("Like (Save)", key=f"rec_like_{artist_name}_{track_name}", disabled=is_liked(user_id, artist_name, track_name)):
-                        if add_like(user_id, artist_name, track_name, lastfm_url=track_url):
-                            st.toast(f"Liked {track_name}")
-                        st.rerun()
-                with col2:
-                    if st.button("Dislike", key=f"rec_dislike_{artist_name}_{track_name}"):
-                        add_dislike(user_id, artist_name, track_name, lastfm_url=track_url)
-                        st.toast(f"Disliked {track_name}")
-                        st.rerun()
-                with col3:
-                    if st.button("Skip", key=f"rec_skip_{artist_name}_{track_name}"):
-                        add_skip(user_id, artist_name, track_name, lastfm_url=track_url)
-                        st.toast(f"Skipped {track_name}")
-                        st.rerun()
-                with col4:
-                    if track_url:
-                        st.link_button("Last.fm", track_url)
-                st.divider()
+    with col1:
+        like_disabled = is_liked(user_id, artist_name, track_name)
+        if st.button("Like (Save)", key=f"like_{i}_{k}", disabled=like_disabled):
+            add_like(
+                user_id,
+                artist_name,
+                track_name,
+                lastfm_url=track_url,
+                itunes_url=preview_url,
+            )
+            st.toast("Saved!")
+            replace_one_track_at_index(i, current_genre, user_id)
+            st.rerun()
 
-        st.success("Don't like these? Click 'Recommend More' to try another genre!")
+    with col2:
+        dislike_disabled = is_disliked(user_id, artist_name, track_name)
+        if st.button("Dislike", key=f"dislike_{i}_{k}", disabled=dislike_disabled):
+            add_dislike(
+                user_id,
+                artist_name,
+                track_name,
+                lastfm_url=track_url,
+                itunes_url=preview_url,
+            )
+            st.toast("Disliked.")
+            replace_one_track_at_index(i, current_genre, user_id)
+            st.rerun()
 
-except Exception as e:
-    st.error("Could not fetch recommendations.")
-    with st.expander("Error details"):
-        st.code(str(e))
+    with col3:
+        skip_disabled = is_skipped(user_id, artist_name, track_name)
+        if st.button("Skip", key=f"skip_{i}_{k}", disabled=skip_disabled):
+            add_skip(
+                user_id,
+                artist_name,
+                track_name,
+                lastfm_url=track_url,
+                itunes_url=preview_url,
+            )
+            st.toast("Skipped.")
+            replace_one_track_at_index(i, current_genre, user_id)
+            st.rerun()
+
+    with col4:
+        if track_url:
+            st.link_button("Last.fm", track_url)
+        else:
+            st.button("Last.fm", disabled=True)
+
+    st.divider()
